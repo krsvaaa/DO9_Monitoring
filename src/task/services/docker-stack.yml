@@ -1,0 +1,309 @@
+
+configs:
+  prometheus_config:
+    file: ./prometheus.yml
+
+  prometheus_alerts:
+    file: ./prometheus/alerts.yml
+
+  loki_config:
+    file: ./loki-config.yaml
+
+  monitoring_telegram_template:
+    file: ./telegram-bot/default.tmpl
+
+
+networks:
+  app_default:
+    external: true
+    name: monitoring_app_default
+
+
+services:
+
+  node-exporter:
+    image: prom/node-exporter:latest
+    deploy:
+      mode: global
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - "--path.procfs=/host/proc"
+      - "--path.sysfs=/host/sys"
+      - "--path.rootfs=/rootfs"
+    networks:
+      - app_default
+
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:latest
+    deploy:
+      mode: global
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+    ports:
+      - target: 8080
+        published: 8080
+        mode: host
+    networks:
+      - app_default
+
+
+  blackbox-exporter:
+    image: prom/blackbox-exporter:latest
+    networks:
+      - app_default
+
+
+  loki:
+    image: grafana/loki:latest
+    user: "0:0"
+    command: -config.file=/etc/loki/loki-config.yaml
+    ports:
+      - "3100:3100"
+    configs:
+      - source: loki_config
+        target: /etc/loki/loki-config.yaml
+    volumes:
+      - loki-data:/loki
+    networks:
+      - app_default
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+
+
+  promtail:
+    image: grafana/promtail:latest
+    user: "0:0"
+    volumes:
+      - /var/log:/var/log:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /vagrant/services/promtail-config.yml:/etc/promtail/promtail-config.yml:ro
+    command:
+      - -config.file=/etc/promtail/promtail-config.yml
+    networks:
+      - app_default
+    deploy:
+      mode: global
+
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - /vagrant/services/grafana/provisioning:/etc/grafana/provisioning
+    networks:
+      - app_default
+
+
+  prometheus:
+    image: prom/prometheus:latest
+    configs:
+      - source: prometheus_config
+        target: /etc/prometheus/prometheus.yml
+      - source: prometheus_alerts
+        target: /etc/prometheus/alerts.yml
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+    ports:
+      - "9090:9090"
+    networks:
+      - app_default
+
+  alertmanager:
+    image: prom/alertmanager:v0.23.0
+    ports:
+      - "9093:9093"
+    volumes:
+      - ./alertmanager:/config
+      - alertmanager-data:/data
+    command:
+      - "--config.file=/config/alertmanager.yml"
+      - "--log.level=debug"
+    networks:
+      - app_default
+
+
+  telegram-bot:
+    image: metalmatze/alertmanager-bot:0.4.0
+    networks:
+      - app_default
+
+    configs:
+      - source: monitoring_telegram_template
+        target: /etc/telegram/default.tmpl
+
+    command:
+      - "--alertmanager.url=http://alertmanager:9093"
+      - "--listen.addr=0.0.0.0:8080"
+      - "--template.paths=/etc/telegram/default.tmpl"
+      - "--store=bolt"
+      - "--bolt.path=/data/bot.db"
+      - "--telegram.token=8782225907:AAHruVhUYFSS9ectZWekogBxYiK-4ZzyC7k"
+      - "--telegram.admin=1009875391"
+
+    volumes:
+      - telegram-bot-data:/data
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+
+
+
+  postgres:
+    image: krsvaaa/services-postgres:v1
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - app:/var/lib/postgresql/data
+    networks:
+      - app_default
+
+  rabbitmq:
+    image: krsvaaa/services-rabbitmq:v1
+    ports:
+      - "15672:15672"
+      - "5672:5672"
+    networks:
+      - app_default
+
+  session-service:
+    image: krsvaaa/services-session-service:v2
+    ports:
+      - "8081:8081"
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: app
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      RABBIT_MQ_HOST: rabbitmq
+      RABBIT_MQ_PORT: 5672
+      RABBIT_MQ_USER: guest
+      RABBIT_MQ_PASSWORD: guest
+    networks:
+      - app_default
+
+  hotel-service:
+    image: krsvaaa/services-hotel-service:v1
+    ports:
+      - "8082:8082"
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: hotels_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    networks:
+      - app_default
+
+  payment-service:
+    image: krsvaaa/services-payment-service:v1
+    ports:
+      - "8084:8084"
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: payments_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    networks:
+      - app_default
+
+  loyalty-service:
+    image: krsvaaa/services-loyalty-service:v1
+    ports:
+      - "8085:8085"
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: balances_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    networks:
+      - app_default
+
+  report-service:
+    image: krsvaaa/services-report-service:v2
+    ports:
+      - "8086:8086"
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: statistics_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      RABBIT_MQ_HOST: rabbitmq
+      RABBIT_MQ_PORT: 5672
+      RABBIT_MQ_USER: guest
+      RABBIT_MQ_PASSWORD: guest
+      RABBIT_MQ_QUEUE_NAME: messagequeue
+      RABBIT_MQ_EXCHANGE: messagequeue-exchange
+    networks:
+      - app_default
+
+  booking-service:
+    image: krsvaaa/services-booking-service:v2
+    ports:
+      - "8083:8083"
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: reservations_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      RABBIT_MQ_HOST: rabbitmq
+      RABBIT_MQ_PORT: 5672
+      RABBIT_MQ_USER: guest
+      RABBIT_MQ_PASSWORD: guest
+      RABBIT_MQ_QUEUE_NAME: messagequeue
+      RABBIT_MQ_EXCHANGE: messagequeue-exchange
+      HOTEL_SERVICE_HOST: hotel-service
+      HOTEL_SERVICE_PORT: 8082
+      PAYMENT_SERVICE_HOST: payment-service
+      PAYMENT_SERVICE_PORT: 8084
+      LOYALTY_SERVICE_HOST: loyalty-service
+      LOYALTY_SERVICE_PORT: 8085
+    networks:
+      - app_default
+
+  gateway-service:
+    image: krsvaaa/services-gateway-service:v2
+    ports:
+      - "8087:8087"
+    environment:
+      SESSION_SERVICE_HOST: session-service
+      SESSION_SERVICE_PORT: 8081
+      HOTEL_SERVICE_HOST: hotel-service
+      HOTEL_SERVICE_PORT: 8082
+      BOOKING_SERVICE_HOST: booking-service
+      BOOKING_SERVICE_PORT: 8083
+      PAYMENT_SERVICE_HOST: payment-service
+      PAYMENT_SERVICE_PORT: 8084
+      LOYALTY_SERVICE_HOST: loyalty-service
+      LOYALTY_SERVICE_PORT: 8085
+      REPORT_SERVICE_HOST: report-service
+      REPORT_SERVICE_PORT: 8086
+    networks:
+      - app_default
+
+volumes:
+  grafana-data:
+  loki-data:
+  app:
+  alertmanager-data:
+  telegram-bot-data:

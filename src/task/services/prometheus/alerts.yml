@@ -1,0 +1,35 @@
+groups:
+  - name: system-alerts
+    rules:
+
+      - alert: LowMemory
+        expr: node_memory_MemAvailable_bytes < 100 * 1024 * 1024
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: "Memory < 100MB on {{ $labels.instance }}"
+
+      - alert: HighMemoryUsage
+        expr: (node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes) > 1 * 1024 * 1024 * 1024
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: "RAM usage > 1GB on {{ $labels.instance }}"
+
+      - alert: HighCPUUsage
+        expr: (100 - (avg by(instance)(rate(node_cpu_seconds_total{mode="idle"}[1m])) * 100)) > 10
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: "CPU > 10% on {{ $labels.instance }}"
+          
+      - alert: TestAlert
+        expr: vector(1)
+        for: 10s
+        labels:
+          severity: critical
+        annotations:
+          summary: "Test alert works"

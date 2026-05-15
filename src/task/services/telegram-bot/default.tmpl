@@ -1,0 +1,7 @@
+{{ define "telegram.default" }}
+{{ range .Alerts }}
+{{ .Status | toUpper }}: {{ .Labels.alertname }}
+{{ .Annotations.summary }}
+{{ .Annotations.description }}
+{{ end }}
+{{ end }}

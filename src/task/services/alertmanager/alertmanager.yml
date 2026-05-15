@@ -1,0 +1,25 @@
+global:
+  smtp_smarthost: 'smtp.gmail.com:587'
+  smtp_from: 'qwertydi71@gmail.com'
+  smtp_auth_username: 'qwertydi71@gmail.com'
+  smtp_auth_password: 'rzhkaaxtfhdaagxr'
+  smtp_require_tls: true
+
+route:
+  receiver: telegram-email
+  group_by: ['alertname']
+
+  routes:
+    - matchers:
+        - severity="critical"
+      receiver: telegram-email
+
+receivers:
+  - name: telegram-email
+    webhook_configs:
+      - url: http://telegram-bot:8080/alerts
+        send_resolved: true
+
+    email_configs:
+      - to: "qwertydi71@gmail.com"
+        send_resolved: true
